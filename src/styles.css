@@ -29,6 +29,11 @@ button {
   font: inherit;
 }
 
+button:focus-visible {
+  outline: 2px solid #7aa2ff;
+  outline-offset: 2px;
+}
+
 .shell {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -81,6 +86,21 @@ h1 {
   border-radius: 8px;
   color: #8f9bb3;
   background: #08090c;
+  text-align: center;
+}
+
+.slide-label {
+  margin: 0 0 1rem;
+  color: #8f9bb3;
+  font-size: 1rem;
+}
+
+.slide-number {
+  margin: 0;
+  color: #f6f7fb;
+  font-size: clamp(4rem, 18vw, 12rem);
+  font-weight: 800;
+  line-height: 1;
 }
 
 .shell--audience {
@@ -90,6 +110,11 @@ h1 {
 .shell--audience .toolbar,
 .shell--audience .controls {
   display: none;
+}
+
+.shell--audience .stage {
+  width: 100vw;
+  height: 100vh;
 }
 
 .shell--audience .slide-frame {
