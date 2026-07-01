@@ -10,6 +10,17 @@ struct PresentationSnapshot {
     total_pages: usize,
 }
 
+#[derive(Serialize)]
+struct MonitorInfo {
+    index: usize,
+    name: Option<String>,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    scale_factor: f64,
+}
+
 struct PresentationModel {
     current_page: usize,
     total_pages: usize,
@@ -105,6 +116,46 @@ fn previous_page(
     Ok(snapshot)
 }
 
+#[tauri::command]
+fn list_monitors(app_handle: AppHandle) -> Result<Vec<MonitorInfo>, String> {
+    let monitors = app_handle
+        .available_monitors()
+        .map_err(|error| error.to_string())?;
+
+    Ok(monitors
+        .into_iter()
+        .enumerate()
+        .map(|(index, monitor)| {
+            let size = monitor.size();
+            let position = monitor.position();
+
+            MonitorInfo {
+                index,
+                name: monitor.name().cloned(),
+                width: size.width,
+                height: size.height,
+                x: position.x,
+                y: position.y,
+                scale_factor: monitor.scale_factor(),
+            }
+        })
+        .collect())
+}
+
+#[tauri::command]
+fn toggle_fullscreen(app_handle: AppHandle, label: String) -> Result<bool, String> {
+    let window = app_handle
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("window not found: {label}"))?;
+    let next = !window.is_fullscreen().map_err(|error| error.to_string())?;
+
+    window
+        .set_fullscreen(next)
+        .map_err(|error| error.to_string())?;
+
+    Ok(next)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -113,7 +164,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_presentation_state,
             next_page,
-            previous_page
+            previous_page,
+            list_monitors,
+            toggle_fullscreen
         ])
         .setup(|app| {
             WebviewWindowBuilder::new(

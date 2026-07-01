@@ -9,8 +9,19 @@ type PresentationState = {
   total_pages: number;
 };
 
+type MonitorInfo = {
+  index: number;
+  name: string | null;
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  scale_factor: number;
+};
+
 const params = new URLSearchParams(window.location.search);
 const role = (params.get('role') as Role | null) ?? 'presenter';
+const windowLabel = role === 'audience' ? 'audience' : 'presenter';
 
 const app = document.querySelector<HTMLDivElement>('#app');
 
@@ -47,12 +58,19 @@ app.innerHTML = `
       <button type="button" data-command="previous">Previous</button>
       <div class="counter" data-counter>1 / 1</div>
       <button type="button" data-command="next">Next</button>
+      <button type="button" data-command="fullscreen">Fullscreen</button>
+    </section>
+
+    <section class="monitor-panel" aria-label="monitor information">
+      <h2>Monitors</h2>
+      <div data-monitors>Loading...</div>
     </section>
   </main>
 `;
 
 const counter = app.querySelector<HTMLElement>('[data-counter]');
 const slideNumber = app.querySelector<HTMLElement>('[data-slide-number]');
+const monitors = app.querySelector<HTMLElement>('[data-monitors]');
 
 function renderState(state: PresentationState): void {
   const label = `${state.current_page} / ${state.total_pages}`;
@@ -64,6 +82,29 @@ function renderState(state: PresentationState): void {
   if (slideNumber) {
     slideNumber.textContent = String(state.current_page);
   }
+}
+
+function renderMonitors(items: MonitorInfo[]): void {
+  if (!monitors) {
+    return;
+  }
+
+  if (items.length === 0) {
+    monitors.textContent = 'No monitors reported';
+    return;
+  }
+
+  monitors.innerHTML = items
+    .map((monitor) => {
+      const name = monitor.name ?? `Display ${monitor.index + 1}`;
+      return `
+        <div class="monitor-item">
+          <span>${name}</span>
+          <span>${monitor.width}x${monitor.height} @ ${monitor.x},${monitor.y}</span>
+        </div>
+      `;
+    })
+    .join('');
 }
 
 async function sendCommand(command: 'next_page' | 'previous_page'): Promise<void> {
@@ -79,6 +120,10 @@ app.querySelector('[data-command="previous"]')?.addEventListener('click', () => 
   void sendCommand('previous_page');
 });
 
+app.querySelector('[data-command="fullscreen"]')?.addEventListener('click', () => {
+  void invoke<boolean>('toggle_fullscreen', { label: windowLabel });
+});
+
 window.addEventListener('keydown', (event) => {
   if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') {
     event.preventDefault();
@@ -89,6 +134,11 @@ window.addEventListener('keydown', (event) => {
     event.preventDefault();
     void sendCommand('previous_page');
   }
+
+  if (event.key.toLowerCase() === 'f') {
+    event.preventDefault();
+    void invoke<boolean>('toggle_fullscreen', { label: windowLabel });
+  }
 });
 
 void listen<PresentationState>('presentation-state', (event) => {
@@ -96,3 +146,4 @@ void listen<PresentationState>('presentation-state', (event) => {
 });
 
 void invoke<PresentationState>('get_presentation_state').then(renderState);
+void invoke<MonitorInfo[]>('list_monitors').then(renderMonitors);
