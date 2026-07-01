@@ -7,6 +7,9 @@ type Role = 'presenter' | 'audience' | 'mobile';
 type PresentationState = {
   current_page: number;
   total_pages: number;
+  pdf_path: string | null;
+  page_image: string | null;
+  render_error: string | null;
 };
 
 type MonitorInfo = {
@@ -42,12 +45,22 @@ app.innerHTML = `
         <p class="eyebrow">ppmc</p>
         <h1>${roleTitle[role]}</h1>
       </div>
-      <div class="status" aria-label="connection status">Synced</div>
+      <div class="status" aria-label="connection status" data-status>Ready</div>
     </section>
+
+    <form class="load-panel" data-load-form>
+      <label for="pdf-path">PDF path</label>
+      <div class="load-row">
+        <input id="pdf-path" name="pdf-path" type="text" placeholder="/path/to/slides.pdf" data-pdf-path />
+        <button type="submit">Load PDF</button>
+      </div>
+      <p class="error" data-error hidden></p>
+    </form>
 
     <section class="stage" aria-label="slide preview">
       <div class="slide-frame">
-        <div>
+        <img class="slide-image" alt="Rendered PDF page" data-slide-image hidden />
+        <div class="slide-placeholder" data-slide-placeholder>
           <p class="slide-label">PDF page preview</p>
           <p class="slide-number" data-slide-number>1</p>
         </div>
@@ -70,7 +83,34 @@ app.innerHTML = `
 
 const counter = app.querySelector<HTMLElement>('[data-counter]');
 const slideNumber = app.querySelector<HTMLElement>('[data-slide-number]');
+const slideImage = app.querySelector<HTMLImageElement>('[data-slide-image]');
+const slidePlaceholder = app.querySelector<HTMLElement>('[data-slide-placeholder]');
 const monitors = app.querySelector<HTMLElement>('[data-monitors]');
+const status = app.querySelector<HTMLElement>('[data-status]');
+const error = app.querySelector<HTMLElement>('[data-error]');
+const loadForm = app.querySelector<HTMLFormElement>('[data-load-form]');
+const pdfPathInput = app.querySelector<HTMLInputElement>('[data-pdf-path]');
+
+function setStatus(message: string): void {
+  if (status) {
+    status.textContent = message;
+  }
+}
+
+function showError(message: string | null): void {
+  if (!error) {
+    return;
+  }
+
+  if (!message) {
+    error.hidden = true;
+    error.textContent = '';
+    return;
+  }
+
+  error.hidden = false;
+  error.textContent = message;
+}
 
 function renderState(state: PresentationState): void {
   const label = `${state.current_page} / ${state.total_pages}`;
@@ -82,6 +122,24 @@ function renderState(state: PresentationState): void {
   if (slideNumber) {
     slideNumber.textContent = String(state.current_page);
   }
+
+  if (pdfPathInput && state.pdf_path) {
+    pdfPathInput.value = state.pdf_path;
+  }
+
+  if (slideImage && slidePlaceholder) {
+    if (state.page_image) {
+      slideImage.src = state.page_image;
+      slideImage.hidden = false;
+      slidePlaceholder.hidden = true;
+    } else {
+      slideImage.removeAttribute('src');
+      slideImage.hidden = true;
+      slidePlaceholder.hidden = false;
+    }
+  }
+
+  showError(state.render_error);
 }
 
 function renderMonitors(items: MonitorInfo[]): void {
@@ -107,17 +165,49 @@ function renderMonitors(items: MonitorInfo[]): void {
     .join('');
 }
 
-async function sendCommand(command: 'next_page' | 'previous_page'): Promise<void> {
-  const state = await invoke<PresentationState>(command);
-  renderState(state);
+async function invokeState(command: 'next_page' | 'previous_page'): Promise<void> {
+  try {
+    setStatus('Rendering');
+    const state = await invoke<PresentationState>(command);
+    renderState(state);
+    setStatus('Ready');
+  } catch (caught) {
+    setStatus('Error');
+    showError(String(caught));
+  }
 }
 
+async function loadPdf(path: string): Promise<void> {
+  try {
+    showError(null);
+    setStatus('Loading');
+    const state = await invoke<PresentationState>('load_pdf', { path });
+    renderState(state);
+    setStatus('Ready');
+  } catch (caught) {
+    setStatus('Error');
+    showError(String(caught));
+  }
+}
+
+loadForm?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const path = pdfPathInput?.value.trim();
+
+  if (!path) {
+    showError('Enter a PDF path.');
+    return;
+  }
+
+  void loadPdf(path);
+});
+
 app.querySelector('[data-command="next"]')?.addEventListener('click', () => {
-  void sendCommand('next_page');
+  void invokeState('next_page');
 });
 
 app.querySelector('[data-command="previous"]')?.addEventListener('click', () => {
-  void sendCommand('previous_page');
+  void invokeState('previous_page');
 });
 
 app.querySelector('[data-command="fullscreen"]')?.addEventListener('click', () => {
@@ -125,14 +215,18 @@ app.querySelector('[data-command="fullscreen"]')?.addEventListener('click', () =
 });
 
 window.addEventListener('keydown', (event) => {
+  if (event.target instanceof HTMLInputElement) {
+    return;
+  }
+
   if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') {
     event.preventDefault();
-    void sendCommand('next_page');
+    void invokeState('next_page');
   }
 
   if (event.key === 'ArrowLeft' || event.key === 'Backspace' || event.key === 'PageUp') {
     event.preventDefault();
-    void sendCommand('previous_page');
+    void invokeState('previous_page');
   }
 
   if (event.key.toLowerCase() === 'f') {
@@ -145,5 +239,7 @@ void listen<PresentationState>('presentation-state', (event) => {
   renderState(event.payload);
 });
 
-void invoke<PresentationState>('get_presentation_state').then(renderState);
+void invoke<PresentationState>('get_presentation_state')
+  .then(renderState)
+  .catch((caught) => showError(String(caught)));
 void invoke<MonitorInfo[]>('list_monitors').then(renderMonitors);

@@ -20,7 +20,8 @@ body {
   background: #111318;
 }
 
-button {
+button,
+input {
   border: 1px solid #3d4352;
   border-radius: 8px;
   padding: 0.75rem 1rem;
@@ -29,7 +30,16 @@ button {
   font: inherit;
 }
 
-button:focus-visible {
+input {
+  min-width: 0;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible {
   outline: 2px solid #7aa2ff;
   outline-offset: 2px;
 }
@@ -48,6 +58,28 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+}
+
+.load-panel {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.load-panel label {
+  color: #b8c4da;
+  font-size: 0.875rem;
+}
+
+.load-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.error {
+  margin: 0;
+  color: #ff9da3;
+  font-size: 0.875rem;
 }
 
 .controls {
@@ -86,11 +118,22 @@ h1 {
   width: min(100%, 1280px);
   aspect-ratio: 16 / 9;
   place-items: center;
+  overflow: hidden;
   border: 1px solid #3d4352;
   border-radius: 8px;
   color: #8f9bb3;
   background: #08090c;
   text-align: center;
+}
+
+.slide-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.slide-placeholder {
+  padding: 1rem;
 }
 
 .slide-label {
@@ -132,6 +175,7 @@ h1 {
 }
 
 .shell--audience .toolbar,
+.shell--audience .load-panel,
 .shell--audience .controls,
 .shell--audience .monitor-panel {
   display: none;
@@ -147,4 +191,10 @@ h1 {
   height: 100vh;
   border: 0;
   border-radius: 0;
+}
+
+@media (max-width: 640px) {
+  .load-row {
+    grid-template-columns: 1fr;
+  }
 }
