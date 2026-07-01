@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::ImageFormat;
 use pdfium_render::prelude::*;
 use serde::Serialize;
-use std::{io::Cursor, path::Path, sync::Mutex};
+use std::{env, ffi::OsStr, io::Cursor, path::Path, sync::Mutex};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 const STATE_EVENT: &str = "presentation-state";
@@ -62,10 +62,11 @@ impl PresentationModel {
 struct AppState {
     presentation: Mutex<PresentationModel>,
     pdfium: Mutex<Option<Pdfium>>,
+    startup_pdf_path: Option<String>,
 }
 
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    fn new(startup_pdf_path: Option<String>) -> Self {
         Self {
             presentation: Mutex::new(PresentationModel {
                 current_page: 0,
@@ -73,8 +74,25 @@ impl Default for AppState {
                 pdf_path: None,
             }),
             pdfium: Mutex::new(None),
+            startup_pdf_path,
         }
     }
+}
+
+fn startup_pdf_arg() -> Option<String> {
+    env::args_os().skip(1).find_map(|argument| {
+        let path = Path::new(&argument);
+        let is_pdf = path
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
+
+        if is_pdf {
+            Some(path.to_string_lossy().into_owned())
+        } else {
+            None
+        }
+    })
 }
 
 fn get_pdfium<'a>(
@@ -167,6 +185,11 @@ fn emit_snapshot(app_handle: &AppHandle, snapshot: &PresentationSnapshot) -> Res
 #[tauri::command]
 fn get_presentation_state(state: State<'_, AppState>) -> Result<PresentationSnapshot, String> {
     snapshot_with_render(&state)
+}
+
+#[tauri::command]
+fn get_startup_pdf_path(state: State<'_, AppState>) -> Option<String> {
+    state.startup_pdf_path.clone()
 }
 
 #[tauri::command]
@@ -286,12 +309,15 @@ fn toggle_fullscreen(app_handle: AppHandle, label: String) -> Result<bool, Strin
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_pdf_path = startup_pdf_arg();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState::default())
+        .manage(AppState::new(startup_pdf_path))
         .invoke_handler(tauri::generate_handler![
             get_presentation_state,
+            get_startup_pdf_path,
             load_pdf,
             next_page,
             previous_page,

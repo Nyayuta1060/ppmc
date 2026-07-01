@@ -264,7 +264,20 @@ void listen<PresentationState>('presentation-state', (event) => {
   renderState(event.payload);
 });
 
-void invoke<PresentationState>('get_presentation_state')
-  .then(renderState)
-  .catch((caught) => showError(String(caught)));
+async function initialize(): Promise<void> {
+  const state = await invoke<PresentationState>('get_presentation_state');
+  renderState(state);
+
+  if (role !== 'presenter' || state.pdf_path) {
+    return;
+  }
+
+  const startupPdfPath = await invoke<string | null>('get_startup_pdf_path');
+
+  if (startupPdfPath) {
+    await loadPdf(startupPdfPath);
+  }
+}
+
+void initialize().catch((caught) => showError(String(caught)));
 void invoke<MonitorInfo[]>('list_monitors').then(renderMonitors);
