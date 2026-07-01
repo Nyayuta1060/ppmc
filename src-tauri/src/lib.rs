@@ -288,6 +288,7 @@ fn toggle_fullscreen(app_handle: AppHandle, label: String) -> Result<bool, Strin
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             get_presentation_state,

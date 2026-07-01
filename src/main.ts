@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { open } from '@tauri-apps/plugin-dialog';
 import './styles.css';
 
 type Role = 'presenter' | 'audience' | 'mobile';
@@ -52,6 +53,7 @@ app.innerHTML = `
       <label for="pdf-path">PDF path</label>
       <div class="load-row">
         <input id="pdf-path" name="pdf-path" type="text" placeholder="/path/to/slides.pdf" data-pdf-path />
+        <button type="button" data-choose-pdf>Choose PDF</button>
         <button type="submit">Load PDF</button>
       </div>
       <p class="error" data-error hidden></p>
@@ -90,6 +92,7 @@ const status = app.querySelector<HTMLElement>('[data-status]');
 const error = app.querySelector<HTMLElement>('[data-error]');
 const loadForm = app.querySelector<HTMLFormElement>('[data-load-form]');
 const pdfPathInput = app.querySelector<HTMLInputElement>('[data-pdf-path]');
+const choosePdfButton = app.querySelector<HTMLButtonElement>('[data-choose-pdf]');
 
 function setStatus(message: string): void {
   if (status) {
@@ -200,6 +203,28 @@ loadForm?.addEventListener('submit', (event) => {
   }
 
   void loadPdf(path);
+});
+
+choosePdfButton?.addEventListener('click', () => {
+  void (async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+
+    if (typeof selected !== 'string') {
+      return;
+    }
+
+    if (pdfPathInput) {
+      pdfPathInput.value = selected;
+    }
+
+    await loadPdf(selected);
+  })().catch((caught) => {
+    setStatus('Error');
+    showError(String(caught));
+  });
 });
 
 app.querySelector('[data-command="next"]')?.addEventListener('click', () => {
