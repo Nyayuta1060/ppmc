@@ -55,4 +55,16 @@ Linux 向けの優先順位:
 
 配布形式に関係なく、インストール後は `ppmc` コマンドで起動できる状態を目指します。deb は `/usr/bin/ppmc` を提供し、AppImage はインストールスクリプトで `~/.local/bin/ppmc` に wrapper または symlink を作成する想定です。
 
+GitHub Releases 公開後は、以下の形式でインストールできるようにします。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Nyayuta1060/ppmc/main/scripts/install.sh | sh
+```
+
+バージョンを固定する場合:
+
+```bash
+PPMC_VERSION=v0.1.0 sh scripts/install.sh
+```
+
 詳細設計は [docs/design.md](docs/design.md) を参照してください。
