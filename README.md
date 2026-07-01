@@ -30,6 +30,12 @@ npm run tauri dev
 
 起動後、発表者画面の `Choose PDF` から PDF を選択します。開発用に PDF パスの直接入力も残しています。
 
+将来的なインストール後の起動形式は以下を想定しています。
+
+```bash
+ppmc slides.pdf
+```
+
 ## PDFium
 
 PDF レンダリングには PDFium の動的ライブラリが必要です。現在の PoC は、実行ディレクトリの PDFium ライブラリを優先し、見つからない場合はシステムライブラリから探します。
@@ -46,5 +52,7 @@ Linux 向けの優先順位:
 2. deb パッケージ
 3. `curl` / `wget` で取得できるインストールスクリプト
 4. snap は後続対応候補
+
+配布形式に関係なく、インストール後は `ppmc` コマンドで起動できる状態を目指します。deb は `/usr/bin/ppmc` を提供し、AppImage はインストールスクリプトで `~/.local/bin/ppmc` に wrapper または symlink を作成する想定です。
 
 詳細設計は [docs/design.md](docs/design.md) を参照してください。
