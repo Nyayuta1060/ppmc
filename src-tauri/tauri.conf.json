@@ -32,6 +32,9 @@
       "icons/256x256.png",
       "icons/512x512.png",
       "icons/icon.png"
-    ]
+    ],
+    "resources": {
+      "resources/pdfium/libpdfium.so": "pdfium/libpdfium.so"
+    }
   }
 }

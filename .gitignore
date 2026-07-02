@@ -13,3 +13,6 @@ yarn-error.log*
 pnpm-debug.log*
 
 .DS_Store
+
+/src-tauri/resources/pdfium/*
+!/src-tauri/resources/pdfium/.gitkeep

@@ -2,7 +2,14 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::ImageFormat;
 use pdfium_render::prelude::*;
 use serde::Serialize;
-use std::{collections::HashMap, env, ffi::OsStr, io::Cursor, path::Path, sync::Mutex};
+use std::{
+    collections::HashMap,
+    env,
+    ffi::OsStr,
+    io::Cursor,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 const STATE_EVENT: &str = "presentation-state";
@@ -105,7 +112,66 @@ fn startup_pdf_arg() -> Option<String> {
     })
 }
 
+fn pdfium_library_candidate(path: impl Into<PathBuf>) -> PathBuf {
+    let path = path.into();
+
+    if path.is_dir() || path.extension().is_none() {
+        Pdfium::pdfium_platform_library_name_at_path(&path)
+    } else {
+        path
+    }
+}
+
+fn push_pdfium_candidate(candidates: &mut Vec<PathBuf>, path: impl Into<PathBuf>) {
+    let candidate = pdfium_library_candidate(path);
+
+    if !candidates.contains(&candidate) {
+        candidates.push(candidate);
+    }
+}
+
+fn pdfium_library_candidates(app_handle: &AppHandle) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(path) = env::var("PPMC_PDFIUM_LIB") {
+        push_pdfium_candidate(&mut candidates, path);
+    }
+
+    if let Ok(path) = env::var("PPMC_PDFIUM_DIR") {
+        push_pdfium_candidate(&mut candidates, path);
+    }
+
+    if let Ok(resource_dir) = app_handle.path().resource_dir() {
+        push_pdfium_candidate(&mut candidates, resource_dir.join("pdfium"));
+    }
+
+    if let Ok(current_dir) = env::current_dir() {
+        push_pdfium_candidate(&mut candidates, current_dir.join("resources/pdfium"));
+        push_pdfium_candidate(
+            &mut candidates,
+            current_dir.join("src-tauri/resources/pdfium"),
+        );
+        push_pdfium_candidate(&mut candidates, current_dir);
+    }
+
+    if let Ok(current_exe) = env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            push_pdfium_candidate(&mut candidates, exe_dir.join("pdfium"));
+            push_pdfium_candidate(&mut candidates, exe_dir.join("../lib/ppmc/pdfium"));
+            push_pdfium_candidate(&mut candidates, exe_dir);
+        }
+    }
+
+    push_pdfium_candidate(
+        &mut candidates,
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/pdfium"),
+    );
+
+    candidates
+}
+
 fn get_pdfium<'a>(
+    app_handle: &AppHandle,
     state: &'a State<'_, AppState>,
 ) -> Result<std::sync::MutexGuard<'a, Option<Pdfium>>, String> {
     let mut pdfium = state
@@ -114,10 +180,31 @@ fn get_pdfium<'a>(
         .map_err(|_| "pdfium state lock poisoned".to_string())?;
 
     if pdfium.is_none() {
-        let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-            .or_else(|_| Pdfium::bind_to_system_library())
-            .map_err(|error| format!("PDFium library is not available: {error}"))?;
-        *pdfium = Some(Pdfium::new(bindings));
+        let candidates = pdfium_library_candidates(app_handle);
+        let mut errors = Vec::new();
+
+        for candidate in &candidates {
+            match Pdfium::bind_to_library(candidate) {
+                Ok(bindings) => {
+                    *pdfium = Some(Pdfium::new(bindings));
+                    return Ok(pdfium);
+                }
+                Err(error) => errors.push(format!("{}: {error}", candidate.display())),
+            }
+        }
+
+        let system_error = match Pdfium::bind_to_system_library() {
+            Ok(bindings) => {
+                *pdfium = Some(Pdfium::new(bindings));
+                return Ok(pdfium);
+            }
+            Err(error) => error.to_string(),
+        };
+
+        return Err(format!(
+            "PDFium library is not available. Run `scripts/setup-pdfium.sh` or set PPMC_PDFIUM_LIB. Tried: {}. System lookup: {system_error}",
+            errors.join("; ")
+        ));
     }
 
     Ok(pdfium)
@@ -155,6 +242,7 @@ fn render_page_data_url(pdfium: &Pdfium, path: &str, page_index: usize) -> Resul
 }
 
 fn cached_page_data_url(
+    app_handle: &AppHandle,
     state: &State<'_, AppState>,
     path: &str,
     page_index: usize,
@@ -177,7 +265,7 @@ fn cached_page_data_url(
     }
 
     let image = {
-        let pdfium = get_pdfium(state)?;
+        let pdfium = get_pdfium(app_handle, state)?;
         render_page_data_url(
             pdfium
                 .as_ref()
@@ -196,7 +284,10 @@ fn cached_page_data_url(
     Ok(image)
 }
 
-fn snapshot_with_render(state: &State<'_, AppState>) -> Result<PresentationSnapshot, String> {
+fn snapshot_with_render(
+    app_handle: &AppHandle,
+    state: &State<'_, AppState>,
+) -> Result<PresentationSnapshot, String> {
     let presentation = state
         .presentation
         .lock()
@@ -210,7 +301,7 @@ fn snapshot_with_render(state: &State<'_, AppState>) -> Result<PresentationSnaps
     let total_pages = presentation.total_pages;
     drop(presentation);
 
-    let image = cached_page_data_url(state, &path, current_page)?;
+    let image = cached_page_data_url(app_handle, state, &path, current_page)?;
 
     Ok(PresentationSnapshot {
         current_page: current_page + 1,
@@ -228,8 +319,11 @@ fn emit_snapshot(app_handle: &AppHandle, snapshot: &PresentationSnapshot) -> Res
 }
 
 #[tauri::command]
-fn get_presentation_state(state: State<'_, AppState>) -> Result<PresentationSnapshot, String> {
-    snapshot_with_render(&state)
+fn get_presentation_state(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PresentationSnapshot, String> {
+    snapshot_with_render(&app_handle, &state)
 }
 
 #[tauri::command]
@@ -248,7 +342,7 @@ fn load_pdf(
     }
 
     let total_pages = {
-        let pdfium = get_pdfium(&state)?;
+        let pdfium = get_pdfium(&app_handle, &state)?;
         let document = pdfium
             .as_ref()
             .ok_or_else(|| "PDFium was not initialized".to_string())?
@@ -273,7 +367,7 @@ fn load_pdf(
         .map_err(|_| "page cache lock poisoned".to_string())?
         .clear();
 
-    let snapshot = snapshot_with_render(&state)?;
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
     emit_snapshot(&app_handle, &snapshot)?;
 
     Ok(snapshot)
@@ -292,7 +386,7 @@ fn next_page(
         presentation.next_page();
     }
 
-    let snapshot = snapshot_with_render(&state)?;
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
     emit_snapshot(&app_handle, &snapshot)?;
 
     Ok(snapshot)
@@ -311,7 +405,7 @@ fn previous_page(
         presentation.previous_page();
     }
 
-    let snapshot = snapshot_with_render(&state)?;
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
     emit_snapshot(&app_handle, &snapshot)?;
 
     Ok(snapshot)

@@ -32,10 +32,11 @@ PoC として以下を実装済みです。
 
 ## 開発
 
-依存関係を入れて、フロントエンドと Rust バックエンドを確認します。
+依存関係と開発用 PDFium を用意して、フロントエンドと Rust バックエンドを確認します。
 
 ```bash
 npm install
+scripts/setup-pdfium.sh
 npm run build
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
@@ -56,7 +57,13 @@ ppmc slides.pdf
 
 ## PDF レンダリング
 
-PDF レンダリングには PDFium を使います。現在の PoC は、実行ディレクトリの PDFium ライブラリを優先し、見つからない場合はシステムライブラリを探します。
+PDF レンダリングには PDFium を使います。開発環境では以下で `src-tauri/resources/pdfium/libpdfium.so` を取得します。
+
+```bash
+scripts/setup-pdfium.sh
+```
+
+実行時の探索順は、`PPMC_PDFIUM_LIB`、`PPMC_PDFIUM_DIR`、Tauri の resource dir、`src-tauri/resources/pdfium`、実行ファイル周辺、システムライブラリです。
 
 リリース版では、GitHub Releases の配布物に PDFium を同梱し、一般ユーザーが追加セットアップなしで起動できる形を目指します。
 

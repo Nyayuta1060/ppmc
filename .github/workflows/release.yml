@@ -39,6 +39,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Set up PDFium
+        run: scripts/setup-pdfium.sh
+
       - name: Build Tauri bundles
         run: npm run tauri -- build --bundles appimage,deb
 
