@@ -2,7 +2,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::ImageFormat;
 use pdfium_render::prelude::*;
 use serde::Serialize;
-use std::{env, ffi::OsStr, io::Cursor, path::Path, sync::Mutex};
+use std::{collections::HashMap, env, ffi::OsStr, io::Cursor, path::Path, sync::Mutex};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 const STATE_EVENT: &str = "presentation-state";
@@ -35,6 +35,14 @@ struct PresentationModel {
     pdf_path: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PageCacheKey {
+    pdf_path: String,
+    page_index: usize,
+    width: i32,
+    max_height: i32,
+}
+
 impl PresentationModel {
     fn snapshot_without_image(&self, render_error: Option<String>) -> PresentationSnapshot {
         PresentationSnapshot {
@@ -62,6 +70,7 @@ impl PresentationModel {
 struct AppState {
     presentation: Mutex<PresentationModel>,
     pdfium: Mutex<Option<Pdfium>>,
+    page_cache: Mutex<HashMap<PageCacheKey, String>>,
     startup_pdf_path: Option<String>,
 }
 
@@ -74,6 +83,7 @@ impl AppState {
                 pdf_path: None,
             }),
             pdfium: Mutex::new(None),
+            page_cache: Mutex::new(HashMap::new()),
             startup_pdf_path,
         }
     }
@@ -144,6 +154,48 @@ fn render_page_data_url(pdfium: &Pdfium, path: &str, page_index: usize) -> Resul
     Ok(format!("data:image/png;base64,{}", STANDARD.encode(png)))
 }
 
+fn cached_page_data_url(
+    state: &State<'_, AppState>,
+    path: &str,
+    page_index: usize,
+) -> Result<String, String> {
+    let cache_key = PageCacheKey {
+        pdf_path: path.to_string(),
+        page_index,
+        width: RENDER_WIDTH,
+        max_height: RENDER_MAX_HEIGHT,
+    };
+
+    if let Some(image) = state
+        .page_cache
+        .lock()
+        .map_err(|_| "page cache lock poisoned".to_string())?
+        .get(&cache_key)
+        .cloned()
+    {
+        return Ok(image);
+    }
+
+    let image = {
+        let pdfium = get_pdfium(state)?;
+        render_page_data_url(
+            pdfium
+                .as_ref()
+                .ok_or_else(|| "PDFium was not initialized".to_string())?,
+            path,
+            page_index,
+        )?
+    };
+
+    state
+        .page_cache
+        .lock()
+        .map_err(|_| "page cache lock poisoned".to_string())?
+        .insert(cache_key, image.clone());
+
+    Ok(image)
+}
+
 fn snapshot_with_render(state: &State<'_, AppState>) -> Result<PresentationSnapshot, String> {
     let presentation = state
         .presentation
@@ -158,14 +210,7 @@ fn snapshot_with_render(state: &State<'_, AppState>) -> Result<PresentationSnaps
     let total_pages = presentation.total_pages;
     drop(presentation);
 
-    let pdfium = get_pdfium(state)?;
-    let image = render_page_data_url(
-        pdfium
-            .as_ref()
-            .ok_or_else(|| "PDFium was not initialized".to_string())?,
-        &path,
-        current_page,
-    )?;
+    let image = cached_page_data_url(state, &path, current_page)?;
 
     Ok(PresentationSnapshot {
         current_page: current_page + 1,
@@ -222,6 +267,11 @@ fn load_pdf(
         presentation.total_pages = total_pages.max(1);
         presentation.pdf_path = Some(path);
     }
+    state
+        .page_cache
+        .lock()
+        .map_err(|_| "page cache lock poisoned".to_string())?
+        .clear();
 
     let snapshot = snapshot_with_render(&state)?;
     emit_snapshot(&app_handle, &snapshot)?;
