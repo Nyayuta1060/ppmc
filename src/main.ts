@@ -9,8 +9,11 @@ type PresentationState = {
   current_page: number;
   total_pages: number;
   pdf_path: string | null;
+  notes_path: string | null;
+  current_notes: string | null;
   page_image: string | null;
   render_error: string | null;
+  notes_error: string | null;
 };
 
 type PresentationCommand = 'first_page' | 'previous_page' | 'next_page' | 'last_page';
@@ -58,6 +61,12 @@ app.innerHTML = `
         <button type="button" data-choose-pdf>Choose PDF</button>
         <button type="submit">Load PDF</button>
       </div>
+      <label for="notes-path">ppmc notes</label>
+      <div class="load-row">
+        <input id="notes-path" name="notes-path" type="text" placeholder="/path/to/slides.ppmc" data-notes-path />
+        <button type="button" data-choose-notes>Choose Notes</button>
+        <button type="button" data-load-notes>Load Notes</button>
+      </div>
       <p class="error" data-error hidden></p>
     </form>
 
@@ -69,6 +78,14 @@ app.innerHTML = `
           <p class="slide-number" data-slide-number>1</p>
         </div>
       </div>
+    </section>
+
+    <section class="notes-panel" aria-label="presenter notes">
+      <div class="panel-heading">
+        <h2>Presenter Notes</h2>
+        <span data-notes-source>No .ppmc loaded</span>
+      </div>
+      <pre data-current-notes>No notes for this page.</pre>
     </section>
 
     <section class="controls" aria-label="presentation controls">
@@ -97,6 +114,11 @@ const error = app.querySelector<HTMLElement>('[data-error]');
 const loadForm = app.querySelector<HTMLFormElement>('[data-load-form]');
 const pdfPathInput = app.querySelector<HTMLInputElement>('[data-pdf-path]');
 const choosePdfButton = app.querySelector<HTMLButtonElement>('[data-choose-pdf]');
+const notesPathInput = app.querySelector<HTMLInputElement>('[data-notes-path]');
+const chooseNotesButton = app.querySelector<HTMLButtonElement>('[data-choose-notes]');
+const loadNotesButton = app.querySelector<HTMLButtonElement>('[data-load-notes]');
+const notesSource = app.querySelector<HTMLElement>('[data-notes-source]');
+const currentNotes = app.querySelector<HTMLElement>('[data-current-notes]');
 const slideFrame = app.querySelector<HTMLElement>('.slide-frame');
 
 function setStatus(message: string): void {
@@ -135,6 +157,18 @@ function renderState(state: PresentationState): void {
     pdfPathInput.value = state.pdf_path;
   }
 
+  if (notesPathInput && state.notes_path) {
+    notesPathInput.value = state.notes_path;
+  }
+
+  if (notesSource) {
+    notesSource.textContent = state.notes_path ?? 'No .ppmc loaded';
+  }
+
+  if (currentNotes) {
+    currentNotes.textContent = state.current_notes?.trim() || 'No notes for this page.';
+  }
+
   if (slideImage && slidePlaceholder) {
     if (state.page_image) {
       slideImage.src = state.page_image;
@@ -147,7 +181,7 @@ function renderState(state: PresentationState): void {
     }
   }
 
-  showError(state.render_error);
+  showError(state.render_error ?? state.notes_error);
 }
 
 function renderMonitors(items: MonitorInfo[]): void {
@@ -185,6 +219,19 @@ async function invokeState(command: PresentationCommand): Promise<void> {
   }
 }
 
+async function loadNotes(path: string): Promise<void> {
+  try {
+    showError(null);
+    setStatus('Loading notes');
+    const state = await invoke<PresentationState>('load_notes', { path });
+    renderState(state);
+    setStatus('Ready');
+  } catch (caught) {
+    setStatus('Error');
+    showError(String(caught));
+  }
+}
+
 async function loadPdf(path: string): Promise<void> {
   try {
     showError(null);
@@ -210,6 +257,17 @@ loadForm?.addEventListener('submit', (event) => {
   void loadPdf(path);
 });
 
+loadNotesButton?.addEventListener('click', () => {
+  const path = notesPathInput?.value.trim();
+
+  if (!path) {
+    showError('Enter a .ppmc notes path.');
+    return;
+  }
+
+  void loadNotes(path);
+});
+
 choosePdfButton?.addEventListener('click', () => {
   void (async () => {
     const selected = await open({
@@ -226,6 +284,28 @@ choosePdfButton?.addEventListener('click', () => {
     }
 
     await loadPdf(selected);
+  })().catch((caught) => {
+    setStatus('Error');
+    showError(String(caught));
+  });
+});
+
+chooseNotesButton?.addEventListener('click', () => {
+  void (async () => {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'ppmc notes', extensions: ['ppmc'] }],
+    });
+
+    if (typeof selected !== 'string') {
+      return;
+    }
+
+    if (notesPathInput) {
+      notesPathInput.value = selected;
+    }
+
+    await loadNotes(selected);
   })().catch((caught) => {
     setStatus('Error');
     showError(String(caught));

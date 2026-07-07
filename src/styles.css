@@ -154,16 +154,44 @@ h1 {
   padding: 0;
 }
 
+.notes-panel,
 .monitor-panel {
   border-top: 1px solid #2b3140;
   padding-top: 0.75rem;
   color: #b8c4da;
 }
 
+.notes-panel h2,
 .monitor-panel h2 {
   margin: 0 0 0.5rem;
   color: #f6f7fb;
   font-size: 0.875rem;
+}
+
+.notes-panel pre {
+  max-height: 12rem;
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: #f6f7fb;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel-heading span {
+  min-width: 0;
+  overflow: hidden;
+  color: #8f9bb3;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .monitor-item {
@@ -176,6 +204,7 @@ h1 {
 
 .shell--audience .toolbar,
 .shell--audience .load-panel,
+.shell--audience .notes-panel,
 .shell--audience .controls,
 .shell--audience .monitor-panel {
   display: none;

@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use image::ImageFormat;
 use pdfium_render::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     env,
@@ -21,8 +21,11 @@ struct PresentationSnapshot {
     current_page: usize,
     total_pages: usize,
     pdf_path: Option<String>,
+    notes_path: Option<String>,
+    current_notes: Option<String>,
     page_image: Option<String>,
     render_error: Option<String>,
+    notes_error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -40,6 +43,21 @@ struct PresentationModel {
     current_page: usize,
     total_pages: usize,
     pdf_path: Option<String>,
+    notes_path: Option<String>,
+    notes_by_page: HashMap<usize, String>,
+    notes_error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PpmcDocument {
+    version: Option<u32>,
+    pages: Option<HashMap<String, PpmcPage>>,
+}
+
+#[derive(Deserialize)]
+struct PpmcPage {
+    notes: Option<String>,
+    note: Option<String>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -51,13 +69,20 @@ struct PageCacheKey {
 }
 
 impl PresentationModel {
+    fn current_notes(&self) -> Option<String> {
+        self.notes_by_page.get(&self.current_page).cloned()
+    }
+
     fn snapshot_without_image(&self, render_error: Option<String>) -> PresentationSnapshot {
         PresentationSnapshot {
             current_page: self.current_page + 1,
             total_pages: self.total_pages,
             pdf_path: self.pdf_path.clone(),
+            notes_path: self.notes_path.clone(),
+            current_notes: self.current_notes(),
             page_image: None,
             render_error,
+            notes_error: self.notes_error.clone(),
         }
     }
 
@@ -96,6 +121,9 @@ impl AppState {
                 current_page: 0,
                 total_pages: 1,
                 pdf_path: None,
+                notes_path: None,
+                notes_by_page: HashMap::new(),
+                notes_error: None,
             }),
             pdfium: Mutex::new(None),
             page_cache: Mutex::new(HashMap::new()),
@@ -118,6 +146,56 @@ fn startup_pdf_arg() -> Option<String> {
             None
         }
     })
+}
+
+fn default_notes_path(pdf_path: &str) -> PathBuf {
+    Path::new(pdf_path).with_extension("ppmc")
+}
+
+fn parse_ppmc_notes(path: &Path) -> Result<HashMap<usize, String>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|error| format!("failed to read ppmc notes: {error}"))?;
+    let document: PpmcDocument =
+        toml::from_str(&content).map_err(|error| format!("failed to parse ppmc notes: {error}"))?;
+
+    if let Some(version) = document.version {
+        if version != 1 {
+            return Err(format!("unsupported ppmc notes version: {version}"));
+        }
+    }
+
+    let mut notes = HashMap::new();
+
+    for (page, entry) in document.pages.unwrap_or_default() {
+        let page_number = page
+            .parse::<usize>()
+            .map_err(|_| format!("invalid ppmc page key: {page}"))?;
+
+        if page_number == 0 {
+            return Err("ppmc page numbers must start at 1".to_string());
+        }
+
+        if let Some(note) = entry.notes.or(entry.note) {
+            notes.insert(page_number - 1, note.trim().to_string());
+        }
+    }
+
+    Ok(notes)
+}
+
+fn apply_notes_from_path(presentation: &mut PresentationModel, path: &Path) {
+    match parse_ppmc_notes(path) {
+        Ok(notes) => {
+            presentation.notes_path = Some(path.to_string_lossy().into_owned());
+            presentation.notes_by_page = notes;
+            presentation.notes_error = None;
+        }
+        Err(error) => {
+            presentation.notes_path = Some(path.to_string_lossy().into_owned());
+            presentation.notes_by_page.clear();
+            presentation.notes_error = Some(error);
+        }
+    }
 }
 
 fn pdfium_library_candidate(path: impl Into<PathBuf>) -> PathBuf {
@@ -311,12 +389,20 @@ fn snapshot_with_render(
 
     let image = cached_page_data_url(app_handle, state, &path, current_page)?;
 
+    let presentation = state
+        .presentation
+        .lock()
+        .map_err(|_| "presentation state lock poisoned".to_string())?;
+
     Ok(PresentationSnapshot {
         current_page: current_page + 1,
         total_pages,
         pdf_path: Some(path),
+        notes_path: presentation.notes_path.clone(),
+        current_notes: presentation.current_notes(),
         page_image: Some(image),
         render_error: None,
+        notes_error: presentation.notes_error.clone(),
     })
 }
 
@@ -367,13 +453,47 @@ fn load_pdf(
             .map_err(|_| "presentation state lock poisoned".to_string())?;
         presentation.current_page = 0;
         presentation.total_pages = total_pages.max(1);
+        presentation.notes_path = None;
+        presentation.notes_by_page.clear();
+        presentation.notes_error = None;
+        let notes_path = default_notes_path(&path);
         presentation.pdf_path = Some(path);
+
+        if notes_path.is_file() {
+            apply_notes_from_path(&mut presentation, &notes_path);
+        }
     }
     state
         .page_cache
         .lock()
         .map_err(|_| "page cache lock poisoned".to_string())?
         .clear();
+
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
+    emit_snapshot(&app_handle, &snapshot)?;
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn load_notes(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<PresentationSnapshot, String> {
+    let notes_path = Path::new(&path);
+
+    if !notes_path.is_file() {
+        return Err(format!("ppmc notes file does not exist: {path}"));
+    }
+
+    {
+        let mut presentation = state
+            .presentation
+            .lock()
+            .map_err(|_| "presentation state lock poisoned".to_string())?;
+        apply_notes_from_path(&mut presentation, notes_path);
+    }
 
     let snapshot = snapshot_with_render(&app_handle, &state)?;
     emit_snapshot(&app_handle, &snapshot)?;
@@ -502,6 +622,60 @@ fn quit_app(app_handle: AppHandle) {
     app_handle.exit(0);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn write_temp_ppmc(content: &str) -> PathBuf {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let path = env::temp_dir().join(format!("ppmc-test-{timestamp}.ppmc"));
+        std::fs::write(&path, content).expect("failed to write temp ppmc");
+        path
+    }
+
+    #[test]
+    fn parses_ppmc_page_notes() {
+        let path = write_temp_ppmc(
+            r#"version = 1
+
+[pages.1]
+notes = """
+Opening note
+"""
+
+[pages.2]
+notes = "Second note"
+"#,
+        );
+
+        let notes = parse_ppmc_notes(&path).expect("failed to parse ppmc notes");
+        assert_eq!(notes.get(&0).map(String::as_str), Some("Opening note"));
+        assert_eq!(notes.get(&1).map(String::as_str), Some("Second note"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn rejects_zero_based_ppmc_page_number() {
+        let path = write_temp_ppmc(
+            r#"version = 1
+
+[pages.0]
+notes = "Invalid"
+"#,
+        );
+
+        let error = parse_ppmc_notes(&path).expect_err("expected page zero to fail");
+        assert!(error.contains("page numbers must start at 1"));
+
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup_pdf_path = startup_pdf_arg();
@@ -514,6 +688,7 @@ pub fn run() {
             get_presentation_state,
             get_startup_pdf_path,
             load_pdf,
+            load_notes,
             next_page,
             previous_page,
             first_page,
