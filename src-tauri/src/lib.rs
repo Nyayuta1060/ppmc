@@ -72,6 +72,14 @@ impl PresentationModel {
             self.current_page -= 1;
         }
     }
+
+    fn first_page(&mut self) {
+        self.current_page = 0;
+    }
+
+    fn last_page(&mut self) {
+        self.current_page = self.total_pages.saturating_sub(1);
+    }
 }
 
 struct AppState {
@@ -412,6 +420,44 @@ fn previous_page(
 }
 
 #[tauri::command]
+fn first_page(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PresentationSnapshot, String> {
+    {
+        let mut presentation = state
+            .presentation
+            .lock()
+            .map_err(|_| "presentation state lock poisoned".to_string())?;
+        presentation.first_page();
+    }
+
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
+    emit_snapshot(&app_handle, &snapshot)?;
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
+fn last_page(
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PresentationSnapshot, String> {
+    {
+        let mut presentation = state
+            .presentation
+            .lock()
+            .map_err(|_| "presentation state lock poisoned".to_string())?;
+        presentation.last_page();
+    }
+
+    let snapshot = snapshot_with_render(&app_handle, &state)?;
+    emit_snapshot(&app_handle, &snapshot)?;
+
+    Ok(snapshot)
+}
+
+#[tauri::command]
 fn list_monitors(app_handle: AppHandle) -> Result<Vec<MonitorInfo>, String> {
     let monitors = app_handle
         .available_monitors()
@@ -451,6 +497,11 @@ fn toggle_fullscreen(app_handle: AppHandle, label: String) -> Result<bool, Strin
     Ok(next)
 }
 
+#[tauri::command]
+fn quit_app(app_handle: AppHandle) {
+    app_handle.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let startup_pdf_path = startup_pdf_arg();
@@ -465,8 +516,11 @@ pub fn run() {
             load_pdf,
             next_page,
             previous_page,
+            first_page,
+            last_page,
             list_monitors,
-            toggle_fullscreen
+            toggle_fullscreen,
+            quit_app
         ])
         .setup(|app| {
             WebviewWindowBuilder::new(

@@ -13,6 +13,8 @@ type PresentationState = {
   render_error: string | null;
 };
 
+type PresentationCommand = 'first_page' | 'previous_page' | 'next_page' | 'last_page';
+
 type MonitorInfo = {
   index: number;
   name: string | null;
@@ -70,9 +72,11 @@ app.innerHTML = `
     </section>
 
     <section class="controls" aria-label="presentation controls">
+      <button type="button" data-command="first">First</button>
       <button type="button" data-command="previous">Previous</button>
       <div class="counter" data-counter>1 / 1</div>
       <button type="button" data-command="next">Next</button>
+      <button type="button" data-command="last">Last</button>
       <button type="button" data-command="fullscreen">Fullscreen</button>
     </section>
 
@@ -93,6 +97,7 @@ const error = app.querySelector<HTMLElement>('[data-error]');
 const loadForm = app.querySelector<HTMLFormElement>('[data-load-form]');
 const pdfPathInput = app.querySelector<HTMLInputElement>('[data-pdf-path]');
 const choosePdfButton = app.querySelector<HTMLButtonElement>('[data-choose-pdf]');
+const slideFrame = app.querySelector<HTMLElement>('.slide-frame');
 
 function setStatus(message: string): void {
   if (status) {
@@ -168,7 +173,7 @@ function renderMonitors(items: MonitorInfo[]): void {
     .join('');
 }
 
-async function invokeState(command: 'next_page' | 'previous_page'): Promise<void> {
+async function invokeState(command: PresentationCommand): Promise<void> {
   try {
     setStatus('Rendering');
     const state = await invoke<PresentationState>(command);
@@ -227,6 +232,10 @@ choosePdfButton?.addEventListener('click', () => {
   });
 });
 
+app.querySelector('[data-command="first"]')?.addEventListener('click', () => {
+  void invokeState('first_page');
+});
+
 app.querySelector('[data-command="next"]')?.addEventListener('click', () => {
   void invokeState('next_page');
 });
@@ -235,29 +244,93 @@ app.querySelector('[data-command="previous"]')?.addEventListener('click', () => 
   void invokeState('previous_page');
 });
 
+app.querySelector('[data-command="last"]')?.addEventListener('click', () => {
+  void invokeState('last_page');
+});
+
 app.querySelector('[data-command="fullscreen"]')?.addEventListener('click', () => {
   void invoke<boolean>('toggle_fullscreen', { label: windowLabel });
 });
 
+function isInteractiveTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLButtonElement ||
+    target instanceof HTMLSelectElement
+  );
+}
+
+function toggleFullscreen(): void {
+  void invoke<boolean>('toggle_fullscreen', { label: windowLabel });
+}
+
+function quitApp(): void {
+  void invoke<void>('quit_app');
+}
+
 window.addEventListener('keydown', (event) => {
-  if (event.target instanceof HTMLInputElement) {
+  if (isInteractiveTarget(event.target)) {
     return;
   }
 
-  if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'PageDown') {
+  const key = event.key.toLowerCase();
+
+  const nextKeys = ['ArrowRight', 'ArrowDown', ' ', 'PageDown'];
+  const previousKeys = ['ArrowLeft', 'ArrowUp', 'Backspace', 'PageUp'];
+
+  if (nextKeys.includes(event.key) || key === 'n') {
     event.preventDefault();
     void invokeState('next_page');
+    return;
   }
 
-  if (event.key === 'ArrowLeft' || event.key === 'Backspace' || event.key === 'PageUp') {
+  if (previousKeys.includes(event.key) || key === 'p') {
     event.preventDefault();
     void invokeState('previous_page');
+    return;
   }
 
-  if (event.key.toLowerCase() === 'f') {
+  if (event.key === 'Home') {
     event.preventDefault();
-    void invoke<boolean>('toggle_fullscreen', { label: windowLabel });
+    void invokeState('first_page');
+    return;
   }
+
+  if (event.key === 'End') {
+    event.preventDefault();
+    void invokeState('last_page');
+    return;
+  }
+
+  if (key === 'f') {
+    event.preventDefault();
+    toggleFullscreen();
+    return;
+  }
+
+  if (key === 'q' || event.key === 'Escape') {
+    event.preventDefault();
+    quitApp();
+  }
+});
+
+slideFrame?.addEventListener('click', () => {
+  void invokeState('next_page');
+});
+
+slideFrame?.addEventListener('contextmenu', (event) => {
+  event.preventDefault();
+  void invokeState('previous_page');
+});
+
+slideFrame?.addEventListener('wheel', (event) => {
+  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) {
+    return;
+  }
+
+  event.preventDefault();
+  void invokeState(event.deltaY > 0 ? 'next_page' : 'previous_page');
 });
 
 void listen<PresentationState>('presentation-state', (event) => {
